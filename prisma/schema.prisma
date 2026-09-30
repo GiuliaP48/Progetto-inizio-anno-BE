@@ -1,0 +1,256 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// MODEL
+
+// Calendario
+
+model Calendario {
+  id                String            @id @default(auto()) @map("_id") @db.ObjectId
+  nome              String
+  tipo              TipoCalendario
+  permesso_modifica PermessoModifica?
+  colore            String?
+  utente_id         String            @db.ObjectId
+  utente            Utente            @relation(fields: [utente_id], references: [id])
+  membri            Membro[]
+  evento_ids        String[]          @db.ObjectId
+  eventi            Evento[]          @relation(fields: [evento_ids], references: [id])
+  tags              Tag[]
+  note              Nota[]
+  notifiche         Notifica[]
+  preferenze_vista  PreferenzaVista[]
+  todos             Todo[]
+}
+
+type Membro {
+  utente_id      String      @db.ObjectId
+  ruolo          RuoloMembro
+  puo_modificare Boolean     @default(false)
+  stato_invito   StatoInvito @default(in_attesa)
+}
+
+enum TipoCalendario {
+  personale
+  condiviso
+}
+
+enum PermessoModifica {
+  solo_amministratore
+  tutti
+  personalizzato
+}
+
+enum RuoloMembro {
+  amministratore
+  membro
+}
+
+enum StatoInvito {
+  in_attesa
+  accettato
+  rifiutato
+}
+
+// Evento
+
+model Evento {
+  id                        String          @id @default(auto()) @map("_id") @db.ObjectId
+  titolo                    String
+  descrizione               String?
+  data_inizio               DateTime
+  data_fine                 DateTime
+  tutto_il_giorno           Boolean         @default(false)
+  ricorrenza                TipoFrequenzaEstesa?
+  fine_ricorrenza           DateTime?
+  colore                    String?
+  data_occorrenza_originale DateTime?
+  avviso                    Int?
+  evento_padre_id           String?         @db.ObjectId
+  evento_padre              Evento?         @relation("EventoRicorrenza", fields: [evento_padre_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  eventi_figli              Evento[]        @relation("EventoRicorrenza")
+  calendario_ids            String[]        @db.ObjectId
+  calendari                 Calendario[]    @relation(fields: [calendario_ids], references: [id])
+  tag_ids                   String[]        @db.ObjectId
+  tags                      Tag[]           @relation(fields: [tag_ids], references: [id])
+  notifiche                 Notifica[]
+  creato_da                 String?         @db.ObjectId
+  creatore                  Utente?         @relation("EventoCreatoDa", fields: [creato_da], references: [id])
+  creato_il                 DateTime        @default(now())
+  modificato_da             String?         @db.ObjectId
+  modificatore              Utente?         @relation("EventoModificatoDa", fields: [modificato_da], references: [id])
+  modificato_il             DateTime        @updatedAt
+}
+
+enum TipoFrequenzaEstesa {
+  giornaliera
+  settimanale
+  mensile
+  annuale
+}
+
+// Nota
+
+model Nota {
+  id             String     @id @default(auto()) @map("_id") @db.ObjectId
+  testo          String
+  data           DateTime
+  tipo           TipoFrequenza
+  creato_il      DateTime   @default(now())
+  modificato_il  DateTime   @updatedAt
+  calendario_id  String     @db.ObjectId
+  calendario     Calendario @relation(fields: [calendario_id], references: [id])
+  creato_da      String?    @db.ObjectId
+  creatore       Utente?    @relation("NotaCreataDa", fields: [creato_da], references: [id])
+  modificato_da  String?    @db.ObjectId
+  modificatore   Utente?    @relation("NotaModificataDa", fields: [modificato_da], references: [id])
+}
+
+enum TipoFrequenza {
+  giornaliera
+  settimanale
+  mensile
+}
+
+// Preferenza vista
+
+model PreferenzaVista {
+  id            String     @id @default(auto()) @map("_id") @db.ObjectId
+  vista         TipoFrequenzaEstesa
+  utente_id     String     @db.ObjectId
+  utente        Utente     @relation(fields: [utente_id], references: [id])
+  calendario_id String     @db.ObjectId
+  calendario    Calendario @relation(fields: [calendario_id], references: [id])
+
+  @@unique([utente_id, calendario_id])
+}
+
+// Utente
+
+model Utente {
+  id               String            @id @default(auto()) @map("_id") @db.ObjectId
+  nome             String
+  cognome          String
+  email            String            @unique
+  password_hash    String
+  creato_il        DateTime          @default(now())
+  refreshTokens    RefreshToken[]
+  calendari        Calendario[]
+  notifiche        Notifica[]
+  preferenze_vista PreferenzaVista[]
+  note_create      Nota[]  @relation("NotaCreataDa")
+  note_modificate  Nota[]  @relation("NotaModificataDa")
+  eventi_creati      Evento[]  @relation("EventoCreatoDa")
+  eventi_modificati  Evento[]  @relation("EventoModificatoDa")
+  todos_creati      Todo[]  @relation("TodoCreatoDa")
+  todos_modificati  Todo[]  @relation("TodoModificatoDa")
+  tag_creati      Tag[] @relation("TagCreatoDa")
+  tag_modificati  Tag[] @relation("TagModificatoDa")
+}
+
+// Refresh token
+
+model RefreshToken {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  token       String   @unique
+  scadenza    DateTime
+  dispositivo String?
+  utente      Utente   @relation(fields: [utente_id], references: [id])
+  utente_id   String   @db.ObjectId
+}
+
+// Tag
+
+model Tag {
+  id            String     @id @default(auto()) @map("_id") @db.ObjectId
+  nome          String
+  colore        String?
+  calendario_id String     @db.ObjectId
+  calendario    Calendario @relation(fields: [calendario_id], references: [id])
+  evento_ids    String[]   @db.ObjectId
+  eventi        Evento[]   @relation(fields: [evento_ids], references: [id])
+  creato_da      String?    @db.ObjectId
+  creatore       Utente?    @relation("TagCreatoDa", fields: [creato_da], references: [id])
+  modificato_da  String?    @db.ObjectId
+  modificatore   Utente?    @relation("TagModificatoDa", fields: [modificato_da], references: [id])
+
+  @@unique([calendario_id, nome])
+}
+
+// To-do
+
+model Todo {
+  id                 String     @id @default(auto()) @map("_id") @db.ObjectId
+  titolo             String?
+  data_originale     DateTime
+  data_attuale       DateTime
+  tipo               TipoFrequenza
+  priorita           Priorita?
+  posizione          Int
+  volte_rimandato    Int        @default(0)
+  creato_il          DateTime   @default(now())
+  modificato_il      DateTime   @updatedAt
+  calendario_id      String     @db.ObjectId
+  calendario         Calendario @relation(fields: [calendario_id], references: [id])
+  creato_da          String?    @db.ObjectId
+  creatore           Utente?    @relation("TodoCreatoDa", fields: [creato_da], references: [id])
+  modificato_da      String?    @db.ObjectId
+  modificatore       Utente?    @relation("TodoModificatoDa", fields: [modificato_da], references: [id])
+  data_completamento DateTime?
+  elementi           ElementoToDo[]
+}
+
+// Elemento-to-do
+
+model ElementoToDo {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  testo           String
+  completato      Boolean   @default(false)
+  completato_da   String?   @db.ObjectId
+  posizione       Int
+  priorita        Priorita?
+  creato_da       String?   @db.ObjectId
+  creato_il       DateTime  @default(now())
+  modificato_da   String?   @db.ObjectId
+  modificato_il   DateTime  @updatedAt
+  todo_id         String    @db.ObjectId
+  todo            Todo      @relation(fields: [todo_id], references: [id])
+}
+
+enum Priorita {
+  bassa
+  media
+  alta
+}
+
+// Notifica
+
+model Notifica {
+  id               String       @id @default(auto()) @map("_id") @db.ObjectId
+  tipo             TipoNotifica
+  messaggio        String
+  letta            Boolean      @default(false)
+  data_generazione DateTime     @default(now())
+  utente_id        String       @db.ObjectId
+  utente           Utente       @relation(fields: [utente_id], references: [id])
+  evento_id        String?      @db.ObjectId
+  evento           Evento?      @relation(fields: [evento_id], references: [id])
+  calendario_id    String?      @db.ObjectId
+  calendario       Calendario?  @relation(fields: [calendario_id], references: [id])
+}
+
+enum TipoNotifica {
+  avviso_evento
+  invito_calendario
+  rimozione_calendario
+  uscita_calendario
+  eliminazione_calendario
+  nuovo_amministratore
+}
