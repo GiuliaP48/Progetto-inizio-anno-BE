@@ -26,10 +26,22 @@ async function deleteNota(id) {
     return prisma.nota.delete({ where: { id } });
 }
 
+// Ricerca delle note di più calendari che valgono in certi periodi (usato per il riepilogo di oggi)
+// periodi dice per ogni tipo la data di inizio del periodo, es --> giornaliera: oggi, settimanale: lunedì, mensile: giorno 1 
+async function getNoteByCalendariEPeriodi(calendario_ids, periodi) {
+    return prisma.nota.findMany({
+        where: {
+            calendario_id: { in: calendario_ids },
+            OR: Object.entries(periodi).map(([tipo, data]) => ({ tipo, data })),
+        },
+    });
+}
+
 module.exports = {
     createNota,
     getNotaById,
     getNoteByCalendario,
     updateNota,
     deleteNota,
+    getNoteByCalendariEPeriodi
 };

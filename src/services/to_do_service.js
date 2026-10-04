@@ -545,6 +545,22 @@ async function getResoconto(calendario_id, periodo, data, utente_id) {
     };
 }
 
+// Todo ancora da fare per oggi, in tutti i calendari dell'utente (calendario_ids), per il riepilogo di oggi:
+// giornalieri di oggi, settimanali di questa settimana, mensili di questo mese, in ordine di posizione
+async function getTodosOggi(calendario_ids, oggi) {
+    const todos = await todoRepository.getTodosByCalendariEPeriodi(calendario_ids, {
+        giornaliera: inizioPeriodo(oggi, 'giornaliera'),
+        settimanale: inizioPeriodo(oggi, 'settimanale'),
+        mensile: inizioPeriodo(oggi, 'mensile'),
+    });
+
+    const daFare = todos.filter(todo => !todo.data_completamento);
+
+    daFare.sort((primoTodo, secondoTodo) => primoTodo.posizione - secondoTodo.posizione);
+
+    return aggiungiDatiTodo(daFare, false);
+}
+
 module.exports = {
     createTodo,
     getTodoById,
@@ -552,5 +568,6 @@ module.exports = {
     updateTodo,
     deleteTodo,
     postponeTodo,
-    getResoconto
+    getResoconto,
+    getTodosOggi
 }

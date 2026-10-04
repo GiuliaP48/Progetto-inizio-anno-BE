@@ -230,9 +230,24 @@ async function deleteNota(id, utente_id) {
     return notaRepository.deleteNota(id);
 }
 
+// Note che valgono oggi nei calendari indicati, per il riepilogo di oggi:
+// giornaliere di oggi, settimanali di questa settimana, mensili di questo mese, in ordine di data
+async function getNoteOggi(calendario_ids, oggi) {
+    const note = await notaRepository.getNoteByCalendariEPeriodi(calendario_ids, {
+        giornaliera: inizioPeriodo(oggi, 'giornaliera'),
+        settimanale: inizioPeriodo(oggi, 'settimanale'),
+        mensile: inizioPeriodo(oggi, 'mensile'),
+    });
+
+    note.sort((a, b) => a.data - b.data);
+
+    return aggiungiDatiNote(note);
+}
+
 module.exports = {
     createNota,
     getNoteByCalendario,
     updateNota,
     deleteNota,
+    getNoteOggi
 };

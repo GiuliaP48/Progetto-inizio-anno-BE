@@ -54,6 +54,21 @@ async function deleteTodo(id) {
     ]);
 }
 
+// Visualizza i todo di più calendari che valgono in certi periodi (usato per il riepilogo di oggi),
+// con i soli dati degli elementi che servono per i conteggi.
+// periodi dice per ogni tipo la data di inizio del periodo, es. -->  giornaliera: oggi, settimanale: lunedì, mensile: giorno 1
+async function getTodosByCalendariEPeriodi(calendario_ids, periodi) {
+    return prisma.todo.findMany({
+        where: {
+            calendario_id: { in: calendario_ids },
+            OR: Object.entries(periodi).map(([tipo, data]) => ({ tipo, data_attuale: data })),
+        },
+        include: {
+            elementi: { select: { completato: true } },
+        },
+    });
+}
+
 module.exports = {
     createTodo,
     getTodoById,
@@ -61,4 +76,5 @@ module.exports = {
     getUltimaPosizione,
     updateTodo,
     deleteTodo,
+    getTodosByCalendariEPeriodi
 };

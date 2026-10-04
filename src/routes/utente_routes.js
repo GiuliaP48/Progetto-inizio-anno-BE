@@ -11,5 +11,6 @@ router.post('/login', utenteController.loginUtente);
 router.get('/dettagli/:id', verificaToken, utenteController.getProfiloById);
 router.put('/modifica/:id', verificaToken, utenteController.updateProfilo);
 router.delete('/elimina/:id', verificaToken, utenteController.deleteProfilo);
+router.get('/oggi', verificaToken, utenteController.getRiepilogoOggi);
 
 module.exports = router;

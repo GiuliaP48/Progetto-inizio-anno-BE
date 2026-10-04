@@ -60,10 +60,21 @@ async function deleteProfilo(req, res) {
     }
 }
 
+// GET /utenti/oggi
+async function getRiepilogoOggi(req, res) {
+    try {
+        const riepilogo = await utenteService.getRiepilogoOggi(req.utente_id);
+        res.status(200).json(riepilogo);
+    } catch (errore) {
+        gestisciErrore(res, errore, 'Errore nel recupero del riepilogo di oggi');
+    }
+}
+
 module.exports = {
     createUtente,
     loginUtente,
     getProfiloById,
     updateProfilo,
     deleteProfilo,
+    getRiepilogoOggi
 };

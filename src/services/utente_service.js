@@ -13,6 +13,9 @@ const calendarioRepository = require('../repository/calendario_repository');
 const refreshTokenService = require('./refresh_token_service');
 const calendarioService = require('./calendario_service');
 const notificaService = require('./notifica_service');
+const eventoService = require('./evento_service');
+const todoService = require('./to_do_service');
+const notaService = require('./nota_service');
 
 
 // Lettere (anche accentate), spazi e apostrofi: es. "Maria Chiara", "Nicolò", "D'Angelo"
@@ -207,8 +210,22 @@ async function updateProfilo(id, dati, utente_id) {
         }
     }
 
-    // La password non si salva mai in chiaro
+    // Per cambiare la password serve anche quella attuale, che controllo con l'hash salvato.
+    // password_attuale non viene salvata né restituita: validaUtente tiene solo nome, cognome, email e password
     if (datiValidati.password) {
+        if (typeof dati.password_attuale !== 'string' || dati.password_attuale.length === 0) {
+            throw new AppException('Per cambiare la password serve la password attuale', 400);
+        }
+
+        const utente = await utenteRepository.getUtenteById(id);
+        const passwordCorretta = await bcrypt.compare(dati.password_attuale, utente.password_hash);
+
+        // 400 e non 401, perché nel frontend il 401 serve per il rinnovo del token
+        if (!passwordCorretta) {
+            throw new AppException('La password attuale non è corretta', 400);
+        }
+
+        // La password non si salva mai in chiaro
         datiValidati.password_hash = await bcrypt.hash(datiValidati.password, 10);
         delete datiValidati.password;
     }
@@ -293,11 +310,39 @@ async function updateAccessToken(refreshTokenRicevuto) {
     return nuovoAccessToken;
 }
 
+// Riepilogo di oggi per l'area personale: eventi, todo da fare e note di oggi,
+// in tutti i calendari che l'utente può vedere (quelli che amministra e quelli in cui ha accettato l'invito)
+async function getRiepilogoOggi(utente_id) {
+    const calendariAmministrati = await calendarioRepository.getCalendariByAmministratore(utente_id);
+    const calendariDaMembro = await calendarioRepository.getCalendariByMembro(utente_id);
+
+    const calendari = [...calendariAmministrati, ...calendariDaMembro];
+    const calendarioIds = calendari.map(calendario => calendario.id);
+
+    // Oggi senza l'ora, come in getResoconto (mezzanotte UTC, come sono salvate le date di todo e note)
+    const adesso = new Date();
+    const oggi = new Date(Date.UTC(adesso.getFullYear(), adesso.getMonth(), adesso.getDate()));
+
+    // La stessa data nel formato AAAA-MM-GG, per la risposta
+    const dataOggi = oggi.toISOString().slice(0, 10);
+
+    if (calendari.length === 0) {
+        return { data: dataOggi, eventi: [], todos: [], note: [] };
+    }
+
+    const eventi = await eventoService.getEventiOggi(calendari, oggi);
+    const todos = await todoService.getTodosOggi(calendarioIds, oggi);
+    const note = await notaService.getNoteOggi(calendarioIds, oggi);
+
+    return { data: dataOggi, eventi, todos, note };
+}
+
 module.exports = {
     createUtente,
     getProfiloById,
     loginUtente,
     updateProfilo,
     deleteUtente,
-    updateAccessToken
+    updateAccessToken,
+    getRiepilogoOggi
 };
