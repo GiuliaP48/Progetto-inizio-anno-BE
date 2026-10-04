@@ -26,6 +26,15 @@ const UN_GIORNO = 24 * 60 * 60 * 1000;
 // Fuso orario dell'Italia: serve per tenere lo stesso orario italiano anche quando cambia l'ora legale
 const FUSO_ORARIO = 'Europe/Rome';
 
+// Per quanti anni al massimo si generano le occorrenze di ogni tipo di ricorrenza
+// (vale quando non c'è fine_ricorrenza, ed è anche il limite massimo per fine_ricorrenza)
+const LIMITI_ANNI = {
+    giornaliera: 1,
+    settimanale: 2,
+    mensile: 3,
+    annuale: 5,
+};
+
 // Controlla i dati di un evento e restituisce solo i campi ammessi.
 // In creazione si controllano anche ricorrenza e fine_ricorrenza (parziale = false)
 // in modifica (parziale = true) si possono cambiare solo titolo, descrizione, date, tutto il giorno, colore e avviso.
@@ -132,6 +141,15 @@ function validaEvento(dati, parziale = false) {
         if (risultato.fine_ricorrenza < risultato.data_inizio) {
             throw new AppException('La fine della ricorrenza non può essere prima della data di inizio', 400);
         }
+
+        // La fine della ricorrenza non può superare il limite di anni di quel tipo di ricorrenza
+        const anni = LIMITI_ANNI[risultato.ricorrenza];
+        const dataMassima = new Date(risultato.data_inizio);
+        dataMassima.setUTCFullYear(dataMassima.getUTCFullYear() + anni);
+
+        if (risultato.fine_ricorrenza > dataMassima) {
+            throw new AppException(`Per una ricorrenza ${risultato.ricorrenza} la fine può essere al massimo ${anni} ${anni === 1 ? 'anno' : 'anni'} dopo l'inizio`, 400);
+        }
     }
 
     // Vincoli sul colore: è facoltativo
@@ -203,19 +221,14 @@ function minutiAvantiUtc(data) {
 // per mensile e annuale, se il giorno non esiste in quel mese (es. il 31 a febbraio) si usa l'ultimo giorno del mese
 // l'orario resta uguale in ora italiana anche quando cambia l'ora legale (tranne negli eventi di tutto il giorno, che non hanno orario)
 function calcolaDateOccorrenze(dataInizio, ricorrenza, fineRicorrenza, tuttoIlGiorno) {
-    const limitiAnni = {
-        giornaliera: 1,
-        settimanale: 2,
-        mensile: 3,
-        annuale: 5,
-    };
+
 
     let dataLimite;
     if (fineRicorrenza) {
         dataLimite = new Date(Date.UTC(fineRicorrenza.getUTCFullYear(), fineRicorrenza.getUTCMonth(), fineRicorrenza.getUTCDate()) + UN_GIORNO - 1);
     } else {
         dataLimite = new Date(dataInizio);
-        dataLimite.setUTCFullYear(dataLimite.getUTCFullYear() + limitiAnni[ricorrenza]);
+        dataLimite.setUTCFullYear(dataLimite.getUTCFullYear() + LIMITI_ANNI[ricorrenza]);
     }
 
     const anno = dataInizio.getUTCFullYear();
@@ -267,6 +280,46 @@ function calcolaDateOccorrenze(dataInizio, ricorrenza, fineRicorrenza, tuttoIlGi
     }
 
     return date;
+}
+
+
+// Calcola quando inizia la ripetizione successiva alla prima
+// (per mensile e annuale, se il giorno non esiste in quel mese si usa l'ultimo giorno del mese)
+function inizioRipetizioneSuccessiva(dataInizio, ricorrenza) {
+    const anno = dataInizio.getUTCFullYear();
+    const mese = dataInizio.getUTCMonth();
+    const giorno = dataInizio.getUTCDate();
+    const orario = dataInizio.getTime() - Date.UTC(anno, mese, giorno);
+
+    switch (ricorrenza) {
+        case 'giornaliera':
+            return new Date(dataInizio.getTime() + UN_GIORNO);
+
+        case 'settimanale':
+            return new Date(dataInizio.getTime() + 7 * UN_GIORNO);
+
+        case 'mensile': {
+            const ultimoGiorno = new Date(Date.UTC(anno, mese + 2, 0)).getUTCDate();
+            return new Date(Date.UTC(anno, mese + 1, Math.min(giorno, ultimoGiorno)) + orario);
+        }
+
+        case 'annuale': {
+            const ultimoGiorno = new Date(Date.UTC(anno + 1, mese + 1, 0)).getUTCDate();
+            return new Date(Date.UTC(anno + 1, mese, Math.min(giorno, ultimoGiorno)) + orario);
+        }
+    }
+}
+
+// Un evento che si ripete deve finire prima che inizi la ripetizione successiva, altrimenti le ripetizioni si sovrappongono
+// (gli eventi di tutto il giorno non sono interessati)
+function controllaSovrapposizioneRipetizioni(dataInizio, dataFine, ricorrenza, tuttoIlGiorno) {
+    if (!ricorrenza || tuttoIlGiorno) {
+        return;
+    }
+
+    if (dataFine >= inizioRipetizioneSuccessiva(dataInizio, ricorrenza)) {
+        throw new AppException('Un evento che si ripete deve finire prima della ripetizione successiva', 400);
+    }
 }
 
 // Prepara gli eventi per la risposta: nome e cognome di chi li ha creati e modificati, i tag con nome e colore, e il colore del calendario per gli eventi che non ne hanno uno proprio
@@ -337,6 +390,9 @@ async function createEvento(titolo, descrizione, data_inizio, data_fine, tutto_i
 
     const dati = validaEvento({ titolo, descrizione, data_inizio, data_fine, tutto_il_giorno, ricorrenza, fine_ricorrenza, colore, avviso });
 
+
+    controllaSovrapposizioneRipetizioni(dati.data_inizio, dati.data_fine, dati.ricorrenza, dati.tutto_il_giorno);
+
     // Se l'evento è ricorrente, le occorrenze successive hanno gli stessi dati e la stessa durata
     let occorrenze = [];
     if (dati.ricorrenza) {
@@ -381,6 +437,13 @@ async function updateSingolaOccorrenza(id, dati, utente_id) {
 
     if (dataFine < dataInizio) {
         throw new AppException('La data di fine non può essere prima della data di inizio', 400);
+    }
+
+    // Se cambiano le date di un'occorrenza di una serie, controllo che non si sovrapponga alla ripetizione successiva
+    // Per sapere se è tutto il giorno uso il valore mandato nella modifica, se c'è, altrimenti quello già salvato nell'evento
+    if (datiValidati.data_inizio || datiValidati.data_fine) {
+        const tuttoIlGiorno = datiValidati.tutto_il_giorno !== undefined ? datiValidati.tutto_il_giorno : evento.tutto_il_giorno;
+        controllaSovrapposizioneRipetizioni(dataInizio, dataFine, evento.ricorrenza, tuttoIlGiorno);
     }
 
     // Se si sposta un'occorrenza di una serie, si salva la data in cui era prima (data_occorrenza_originale).
@@ -432,6 +495,13 @@ async function updateSerieCompleta(id, dati, utente_id) {
 
     if (nuovaDataFine < nuovaDataInizio) {
         throw new AppException('La data di fine non può essere prima della data di inizio', 400);
+    }
+
+    // Se cambiano le date, controllo che le ripetizioni non si sovrappongano
+    // Per sapere se è tutto il giorno uso il valore mandato nella modifica, se c'è, altrimenti quello già salvato nell'evento
+    if (data_inizio || data_fine) {
+        const tuttoIlGiorno = datiComuni.tutto_il_giorno !== undefined ? datiComuni.tutto_il_giorno : evento.tutto_il_giorno;
+        controllaSovrapposizioneRipetizioni(nuovaDataInizio, nuovaDataFine, evento.ricorrenza, tuttoIlGiorno);
     }
 
     const spostamentoInizio = nuovaDataInizio.getTime() - evento.data_inizio.getTime();
@@ -651,6 +721,108 @@ async function removeTag(evento_id, tag_id, utente_id) {
     return eventoCompleto;
 }
 
+// Controlli comuni per aggiungere o togliere un tag a una serie: evento, permessi, tag e calendario
+// restituisce l'evento trovato
+async function controllaTagSerie(evento_id, tag_id, utente_id) {
+    const evento = await eventoRepository.getEventoById(evento_id);
+
+    if (!evento) {
+        throw new AppException('Evento non trovato', 404);
+    }
+
+    const puoModificare = await puoModificareEvento(evento, utente_id);
+
+    if (!puoModificare) {
+        throw new AppException('Non autorizzato a modificare questo evento', 403);
+    }
+
+    if (!tag_id) {
+        throw new AppException('Il tag è obbligatorio', 400);
+    }
+
+    const tag = await tagRepository.getTagById(tag_id);
+
+    if (!tag) {
+        throw new AppException('Tag non trovato', 404);
+    }
+
+    // I tag sono di un calendario: si possono usare solo sugli eventi di quel calendario
+    if (!evento.calendario_ids.includes(tag.calendario_id)) {
+        throw new AppException('Il tag non appartiene a nessuno dei calendari dell\'evento', 400);
+    }
+
+    return evento;
+}
+
+// Aggiunge un tag a tutta la serie dell'evento (se l'evento non è ricorrente, lo aggiunge solo da lui, come removeTag)
+// le occorrenze che hanno già il tag si saltano, se ce l'avevano già tutte do errore
+async function addTagSerie(evento_id, tag_id, utente_id) {
+    const evento = await controllaTagSerie(evento_id, tag_id, utente_id);
+
+    const eventoPadreId = evento.evento_padre_id || evento.id;
+
+    const aggiornate = await eventoRepository.addTagSerie(eventoPadreId, tag_id, utente_id);
+
+    // Se tutte le occorrenze avevano già il tag non è cambiato niente
+    if (aggiornate === 0) {
+        throw new AppException('Il tag è già collegato a tutta la serie', 409);
+    }
+
+    const eventoAggiornato = await eventoRepository.getEventoById(evento_id);
+    const primoCalendario = await calendarioRepository.getCalendarioById(evento.calendario_ids[0]);
+
+    const [eventoCompleto] = await aggiungiDatiEventi([eventoAggiornato], primoCalendario ? primoCalendario.colore : null);
+    return eventoCompleto;
+}
+
+// Rimuove un tag da tutta la serie dell'evento (se l'evento non è ricorrente, lo toglie solo da lui, come removeTag)
+// le occorrenze che non hanno il tag si saltano, se non ce l'aveva nessuna do errore
+async function removeTagSerie(evento_id, tag_id, utente_id) {
+    const evento = await controllaTagSerie(evento_id, tag_id, utente_id);
+
+    const eventoPadreId = evento.evento_padre_id || evento.id;
+
+    const aggiornate = await eventoRepository.removeTagSerie(eventoPadreId, tag_id, utente_id);
+
+    // Se nessuna occorrenza aveva il tag non è cambiato niente
+    if (aggiornate === 0) {
+        throw new AppException('Il tag non è collegato a nessuna occorrenza della serie', 400);
+    }
+
+    const eventoAggiornato = await eventoRepository.getEventoById(evento_id);
+    const primoCalendario = await calendarioRepository.getCalendarioById(evento.calendario_ids[0]);
+
+    const [eventoCompleto] = await aggiungiDatiEventi([eventoAggiornato], primoCalendario ? primoCalendario.colore : null);
+    return eventoCompleto;
+}
+
+// Eventi di oggi (ora italiana) nei calendari indicati, per il riepilogo di oggi.
+// Ogni evento compare una volta sola: calendario_id è il primo dei suoi calendari tra quelli indicati,
+// e se l'evento non ha un colore prende quello di quel calendario (come in /eventi/lista)
+async function getEventiOggi(calendari, oggi) {
+    // Inizio e fine di oggi in ora italiana: la mezzanotte italiana è la mezzanotte UTC meno la differenza di orario
+    // (calcolata per ogni mezzanotte, così è giusta anche nei giorni in cui cambia l'ora legale)
+    const domani = new Date(oggi.getTime() + UN_GIORNO);
+    const inizio = new Date(oggi.getTime() - minutiAvantiUtc(oggi) * 60000);
+    const fine = new Date(domani.getTime() - minutiAvantiUtc(domani) * 60000);
+
+    const calendariPerId = new Map(calendari.map(calendario => [calendario.id, calendario]));
+
+    const eventi = await eventoRepository.getEventiByCalendari([...calendariPerId.keys()], inizio, fine);
+
+    // Senza colore del calendario: lo aggiungo dopo, perché ogni evento può essere di un calendario diverso
+    const eventiCompleti = await aggiungiDatiEventi(eventi, null);
+
+    return eventiCompleti.map(evento => {
+        const calendario_id = evento.calendario_ids.find(id => calendariPerId.has(id));
+        return {
+            ...evento,
+            colore: evento.colore || calendariPerId.get(calendario_id).colore || null,
+            calendario_id,
+        };
+    });
+}
+
 module.exports = {
     createEvento,
     updateSingolaOccorrenza,
@@ -661,5 +833,8 @@ module.exports = {
     getEventiByCalendario,
     getEventiByTag,
     addTag,
-    removeTag
+    removeTag,
+    addTagSerie,
+    removeTagSerie,
+    getEventiOggi
 };

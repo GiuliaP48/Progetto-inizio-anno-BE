@@ -16,5 +16,7 @@ router.delete('/elimina/:id', verificaToken, eventoController.deleteSingolaOccor
 router.delete('/elimina-serie/:id', verificaToken, eventoController.deleteSerieCompleta);
 router.post('/aggiungi-tag/:id', verificaToken, eventoController.addTag);
 router.delete('/rimuovi-tag/:id', verificaToken, eventoController.removeTag);
+router.post('/aggiungi-tag-serie/:id', verificaToken, eventoController.addTagSerie);
+router.delete('/rimuovi-tag-serie/:id', verificaToken, eventoController.removeTagSerie);
 
 module.exports = router;

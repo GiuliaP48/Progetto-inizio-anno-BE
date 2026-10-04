@@ -7,28 +7,45 @@ const tagEvento = {
 };
 
 // Creazione di un evento e delle sue eventuali occorrenze, in un'unica transazione (o vengono creati tutti, o nessuno)
+// Il padre si crea con create: connect lo collega al creatore e ai calendari, scrivendo l'id in tutti e due i lati
+// Le occorrenze si creano tutte insieme con createMany (molto più veloce con serie lunghe):
+// createMany non sa usare connect, quindi scrivo io gli id e poi aggiungo le occorrenze alla lista degli eventi di ogni calendario
 async function createEvento(dati, occorrenze, calendario_ids, creato_da) {
-    const collegamenti = {
-        // connect collega l'evento al creatore e ai calendari.
-        // Per i calendari scrive l'id in tutti e due i lati: il calendario nell'evento (calendario_ids) e l'evento nel calendario (evento_ids)
-        creatore: { connect: { id: creato_da } },
-        calendari: { connect: calendario_ids.map(id => ({ id })) },
-    };
-
     return prisma.$transaction(async (tx) => {
         const eventoPadre = await tx.evento.create({
-            data: { ...dati, ...collegamenti },
+            data: {
+                ...dati,
+                creatore: { connect: { id: creato_da } },
+                calendari: { connect: calendario_ids.map(id => ({ id })) },
+            },
             include: tagEvento,
         });
 
-        for (const occorrenza of occorrenze) {
-            await tx.evento.create({
-                data: {
+        if (occorrenze.length > 0) {
+            await tx.evento.createMany({
+                data: occorrenze.map(occorrenza => ({
                     ...occorrenza,
-                    ...collegamenti,
-                    evento_padre: { connect: { id: eventoPadre.id } },
-                },
+                    creato_da,
+                    calendario_ids,
+                    evento_padre_id: eventoPadre.id,
+                })),
             });
+
+            // createMany restituisce solo quanti eventi ha creato, non i loro id:
+            // li rileggo cercando gli eventi che hanno come padre quello appena creato (mi servono per i calendari)
+            const occorrenzeCreate = await tx.evento.findMany({
+                where: { evento_padre_id: eventoPadre.id },
+                select: { id: true },
+            });
+            const ids = occorrenzeCreate.map(occorrenza => occorrenza.id);
+
+            // Aggiungo le occorrenze alla lista degli eventi di ogni calendario
+            for (const calendario_id of calendario_ids) {
+                await tx.calendario.update({
+                    where: { id: calendario_id },
+                    data: { evento_ids: { push: ids } },
+                });
+            }
         }
 
         return eventoPadre;
@@ -90,8 +107,9 @@ async function updateEvento(id, dati) {
 }
 
 // Modifica di un'intera serie ricorrente (padre + tutte le occorrenze), in un'unica transazione
-// I dati uguali per tutti (titolo, colore...) vengono copiati
-// le date vengono spostate della stessa "quantità" (in millisecondi)
+// I dati uguali per tutte (titolo, colore...) si scrivono con un solo updateMany
+// Le date invece sono diverse per ogni occorrenza (vengono spostate della stessa "quantità" in millisecondi),
+// quindi le mando tutte insieme con un unico comando (update con la lista di tutte le modifiche)
 async function updateSerie(evento_padre_id, dati, spostamentoInizio, spostamentoFine) {
     return prisma.$transaction(async (tx) => {
         const occorrenze = await tx.evento.findMany({
@@ -101,21 +119,36 @@ async function updateSerie(evento_padre_id, dati, spostamentoInizio, spostamento
                     { evento_padre_id: evento_padre_id },
                 ],
             },
+            select: { id: true, data_inizio: true, data_fine: true, data_occorrenza_originale: true },
         });
 
-        for (const occorrenza of occorrenze) {
-            const nuoviDati = { ...dati };
+        const ids = occorrenze.map(occorrenza => occorrenza.id);
 
-            if (spostamentoInizio !== 0 || spostamentoFine !== 0) {
-                nuoviDati.data_inizio = new Date(occorrenza.data_inizio.getTime() + spostamentoInizio);
-                nuoviDati.data_fine = new Date(occorrenza.data_fine.getTime() + spostamentoFine);
+        await tx.evento.updateMany({
+            where: { id: { in: ids } },
+            data: dati,
+        });
 
-                if (occorrenza.data_occorrenza_originale) {
-                    nuoviDati.data_occorrenza_originale = new Date(occorrenza.data_occorrenza_originale.getTime() + spostamentoInizio);
-                }
-            }
+        if (spostamentoInizio !== 0 || spostamentoFine !== 0) {
+            // Comando: per ogni occorrenza dico quale evento cercare ($oid = id) e le nuove date da scrivere ($date)
+            await tx.$runCommandRaw({
+                update: 'Evento',
+                updates: occorrenze.map(occorrenza => {
+                    const nuoveDate = {
+                        data_inizio: { $date: new Date(occorrenza.data_inizio.getTime() + spostamentoInizio).toISOString() },
+                        data_fine: { $date: new Date(occorrenza.data_fine.getTime() + spostamentoFine).toISOString() },
+                    };
 
-            await tx.evento.update({ where: { id: occorrenza.id }, data: nuoviDati });
+                    if (occorrenza.data_occorrenza_originale) {
+                        nuoveDate.data_occorrenza_originale = { $date: new Date(occorrenza.data_occorrenza_originale.getTime() + spostamentoInizio).toISOString() };
+                    }
+
+                    return {
+                        q: { _id: { $oid: occorrenza.id } },
+                        u: { $set: nuoveDate },
+                    };
+                }),
+            });
         }
 
         return occorrenze.length;
@@ -160,7 +193,8 @@ async function deleteEvento(id) {
 }
 
 // Eliminazione di un evento padre e di tutte le sue occorrenze figlie, in un'unica transazione
-// prima si scollegano tutti da calendari e tag, poi si eliminano le figlie e infine il padre
+// deleteMany non scollega gli eventi da calendari e tag, quindi tolgo io i loro id dalle liste evento_ids di calendari e tag,
+// poi elimino le figlie tutte insieme e infine il padre
 async function deleteSerieCompleta(evento_padre_id) {
     return prisma.$transaction(async (tx) => {
         const occorrenze = await tx.evento.findMany({
@@ -170,16 +204,38 @@ async function deleteSerieCompleta(evento_padre_id) {
                     { evento_padre_id: evento_padre_id },
                 ],
             },
-            select: { id: true },
+            select: { id: true, calendario_ids: true, tag_ids: true },
         });
 
-        // Gli avvisi delle occorrenze eliminate non servono più
-        await tx.notifica.deleteMany({ where: { evento_id: { in: occorrenze.map(occorrenza => occorrenza.id) } } });
+        // Id di tutte le occorrenze della serie: servono per eliminare le notifiche e per toglierle dalle liste di calendari e tag
+        const ids = occorrenze.map(occorrenza => occorrenza.id);
+        // Stessi id in un Set, che controlla molto più velocemente se un id è tra quelli da togliere
+        const idsDaTogliere = new Set(ids);
 
-        for (const occorrenza of occorrenze) {
-            await tx.evento.update({
-                where: { id: occorrenza.id },
-                data: { calendari: { set: [] }, tags: { set: [] } },
+        // Gli avvisi delle occorrenze eliminate non servono più
+        await tx.notifica.deleteMany({ where: { evento_id: { in: ids } } });
+
+        // Calendari e tag collegati alla serie, ognuno una volta sola
+        const calendarioIds = [...new Set(occorrenze.flatMap(occorrenza => occorrenza.calendario_ids))];
+        const tagIds = [...new Set(occorrenze.flatMap(occorrenza => occorrenza.tag_ids))];
+
+        for (const calendario_id of calendarioIds) {
+            const calendario = await tx.calendario.findUnique({ where: { id: calendario_id }, select: { evento_ids: true } });
+            if (!calendario) continue;
+
+            await tx.calendario.update({
+                where: { id: calendario_id },
+                data: { evento_ids: { set: calendario.evento_ids.filter(id => !idsDaTogliere.has(id)) } },
+            });
+        }
+
+        for (const tag_id of tagIds) {
+            const tag = await tx.tag.findUnique({ where: { id: tag_id }, select: { evento_ids: true } });
+            if (!tag) continue;
+
+            await tx.tag.update({
+                where: { id: tag_id },
+                data: { evento_ids: { set: tag.evento_ids.filter(id => !idsDaTogliere.has(id)) } },
             });
         }
 
@@ -217,6 +273,122 @@ async function removeTag(evento_id, tag_id, modificato_da) {
     });
 }
 
+// Aggiunge un tag a tutta una serie ricorrente (padre + occorrenze), in un'unica transazione le occorrenze che hanno già il tag si saltano
+// Uso updateMany invece di un update per occorrenza (molto più veloce con serie lunghe):
+// updateMany non sa usare connect, quindi aggiorno a mano tutti e due i lati della relazione (tag_ids negli eventi, evento_ids nel tag)
+async function addTagSerie(evento_padre_id, tag_id, modificato_da) {
+    return prisma.$transaction(async (tx) => {
+        const serie = await tx.evento.findMany({
+            where: {
+                OR: [
+                    { id: evento_padre_id },
+                    { evento_padre_id: evento_padre_id },
+                ],
+            },
+            select: { id: true, tag_ids: true },
+        });
+
+        // Tengo solo gli id delle occorrenze che non hanno ancora il tag
+        const ids = serie
+            .filter(occorrenza => !occorrenza.tag_ids.includes(tag_id))
+            .map(occorrenza => occorrenza.id);
+
+        if (ids.length > 0) {
+            // Aggiungo il tag a tutte le occorrenze con una sola query
+            await tx.evento.updateMany({
+                where: { id: { in: ids } },
+                data: {
+                    tag_ids: { push: tag_id },
+                    modificato_da,
+                },
+            });
+
+            // Aggiungo le occorrenze alla lista degli eventi del tag
+            await tx.tag.update({
+                where: { id: tag_id },
+                data: { evento_ids: { push: ids } },
+            });
+        }
+
+        return ids.length;
+    }, { timeout: 60000 });
+}
+
+// Rimuove un tag da tutta una serie ricorrente (padre + occorrenze), in un'unica transazione, le occorrenze che non hanno il tag si saltano
+// Prisma non ha un comando per togliere un solo valore da una lista, quindi calcolo io la nuova lista e updateMany dà a tutte le occorrenze esattamente gli stessi tag:
+// per questo raggruppo le occorrenze che alla fine devono avere gli stessi tag e faccio un updateMany per gruppo
+// (di solito il gruppo è uno solo, ne serve un altro solo se un'occorrenza ha un tag diverso)
+async function removeTagSerie(evento_padre_id, tag_id, modificato_da) {
+    return prisma.$transaction(async (tx) => {
+        const serie = await tx.evento.findMany({
+            where: {
+                OR: [
+                    { id: evento_padre_id },
+                    { evento_padre_id: evento_padre_id },
+                ],
+            },
+            select: { id: true, tag_ids: true },
+        });
+
+        // Tengo solo le occorrenze che hanno il tag
+        const occorrenze = serie.filter(occorrenza => occorrenza.tag_ids.includes(tag_id));
+
+        // Per ogni occorrenza calcolo i tag che le restano e la metto nel gruppo giusto.
+        // Ogni gruppo prende il nome dai tag che restano, scritti come testo: [id1, id2] --> "id1,id2"
+        const gruppi = new Map();
+        for (const occorrenza of occorrenze) {
+            const tagRimasti = occorrenza.tag_ids.filter(id => id !== tag_id);
+            const nomeGruppo = tagRimasti.join(',');
+
+            if (!gruppi.has(nomeGruppo)) {
+                gruppi.set(nomeGruppo, { tagRimasti, ids: [] });
+            }
+
+            gruppi.get(nomeGruppo).ids.push(occorrenza.id);
+        }
+
+        for (const gruppo of gruppi.values()) {
+            await tx.evento.updateMany({
+                where: { id: { in: gruppo.ids } },
+                data: {
+                    tag_ids: { set: gruppo.tagRimasti },
+                    modificato_da,
+                },
+            });
+        }
+
+        // Tolgo le occorrenze dalla lista degli eventi del tag
+        if (occorrenze.length > 0) {
+            const ids = occorrenze.map(occorrenza => occorrenza.id);
+            const tag = await tx.tag.findUnique({
+                where: { id: tag_id },
+                select: { evento_ids: true },
+            });
+
+            await tx.tag.update({
+                where: { id: tag_id },
+                data: { evento_ids: { set: tag.evento_ids.filter(id => !ids.includes(id)) } },
+            });
+        }
+
+        return occorrenze.length;
+    }, { timeout: 60000 });
+}
+
+// Visualizza gli eventi di più calendari che si sovrappongono a un periodo, in ordine di data (usato per il riepilogo di oggi)
+// Un evento è di oggi se ne tocca anche solo un pezzo: non deve finire prima che oggi inizi (da), né iniziare dopo che oggi finisce (fino)
+async function getEventiByCalendari(calendario_ids, da, fino) {
+    return prisma.evento.findMany({
+        where: {
+            calendario_ids: { hasSome: calendario_ids },
+            data_fine: { gte: da },
+            data_inizio: { lt: fino },
+        },
+        include: tagEvento,
+        orderBy: { data_inizio: 'asc' },
+    });
+}
+
 module.exports = {
     createEvento,
     getEventoById,
@@ -229,4 +401,7 @@ module.exports = {
     deleteSerieCompleta,
     addTag,
     removeTag,
+    addTagSerie,
+    removeTagSerie,
+    getEventiByCalendari
 };

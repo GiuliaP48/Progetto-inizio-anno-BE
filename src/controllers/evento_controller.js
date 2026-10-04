@@ -115,6 +115,28 @@ async function removeTag(req, res) {
     }
 }
 
+// POST /eventi/aggiungi-tag-serie/:id
+async function addTagSerie(req, res) {
+    try {
+        const { tag_id } = req.body;
+        const eventoAggiornato = await eventoService.addTagSerie(req.params.id, tag_id, req.utente_id);
+        res.status(200).json(eventoAggiornato);
+    } catch (errore) {
+        gestisciErrore(res, errore, 'Errore durante l\'aggiunta del tag alla serie');
+    }
+}
+
+// DELETE /eventi/rimuovi-tag-serie/:id
+async function removeTagSerie(req, res) {
+    try {
+        const { tag_id } = req.body;
+        const eventoAggiornato = await eventoService.removeTagSerie(req.params.id, tag_id, req.utente_id);
+        res.status(200).json(eventoAggiornato);
+    } catch (errore) {
+        gestisciErrore(res, errore, 'Errore durante la rimozione del tag dalla serie');
+    }
+}
+
 module.exports = {
     createEvento,
     getEventoById,
@@ -125,5 +147,7 @@ module.exports = {
     deleteSingolaOccorrenza,
     deleteSerieCompleta,
     addTag,
-    removeTag
+    removeTag,
+    addTagSerie,
+    removeTagSerie
 };
