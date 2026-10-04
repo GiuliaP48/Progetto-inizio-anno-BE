@@ -204,9 +204,13 @@ async function inviteMembro(calendario_id, email, utente_id) {
 
     const membroEsistente = calendario.membri.find(membro => membro.utente_id === utente.id);
 
-    // Se è già nella lista ed è in attesa o ha accettato, non si può reinvitare
-    if (membroEsistente && membroEsistente.stato_invito !== 'rifiutato') {
-        throw new AppException('Utente già membro di questo calendario', 409);
+    // Se è già nella lista ed è in attesa o ha accettato, non si può reinvitare (se ha rifiutato sì)
+    if (membroEsistente && membroEsistente.stato_invito === 'in_attesa') {
+        throw new AppException('Questo utente è già stato invitato: l\'invito è in attesa di risposta', 409);
+    }
+
+    if (membroEsistente && membroEsistente.stato_invito === 'accettato') {
+        throw new AppException('Questo utente è già membro di questo calendario', 409);
     }
 
     let calendarioAggiornato;
