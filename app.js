@@ -41,4 +41,20 @@ app.use('/todos', require('./src/routes/to_do_routes'));
 // Collegamento delle rotte di Elemento-to-do, con prefisso /elementi-to-do
 app.use('/elementi-to-do', require('./src/routes/elemento_to_do_routes'));
 
+// Rotta non trovata: se nessuna rotta sopra corrisponde all'indirizzo chiamato, rispondo in JSON invece della pagina HTML di Express
+app.use((req, res) => {
+    res.status(404).json({ errore: 'Rotta non trovata' });
+});
+
+// Errori che non arrivano ai controller (es. body JSON scritto male): rispondo sempre in JSON
+// Express riconosce questo blocco come gestore degli errori perché ha 4 parametri, quindi next va scritto anche se non lo uso
+app.use((errore, req, res, next) => {
+    if (errore.type === 'entity.parse.failed') {
+        return res.status(400).json({ errore: 'Body JSON non valido' });
+    }
+
+    console.error(errore);
+    res.status(500).json({ errore: 'Errore interno del server' });
+});
+
 module.exports = app;
