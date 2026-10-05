@@ -101,22 +101,27 @@ async function aggiungiDatiElementi(elementi) {
     });
 }
 
-// Aggiorna data_completamento del todo in base ai suoi elementi:
-// la mette quando il todo diventa completo (tutti gli elementi fatti) e la toglie quando smette di esserlo.
+// Quando si crea, modifica, completa (o si toglie la spunta) o elimina un elemento, anche il suo todo risulta modificato:
+// - modificato_da diventa chi ha fatto l'operazione sull'elemento (modificato_il si aggiorna da solo)
+// - data_completamento si mette quando il todo diventa completo (tutti gli elementi fatti) e si toglie quando smette di esserlo
 // Se il todo era già completo la data non cambia, così resta il giorno in cui è stato finito.
-async function verificaCompletamentoTodo(todo_id) {
+async function aggiornaTodo(todo_id, utente_id) {
     const todo = await todoRepository.getTodoById(todo_id);
 
     const tuttiCompletati = todo.elementi.length > 0
         && todo.elementi.every(elemento => elemento.completato);
 
+    const dati = { modificato_da: utente_id };
+
     if (tuttiCompletati && !todo.data_completamento) {
-        await todoRepository.updateTodo(todo_id, { data_completamento: new Date() });
+        dati.data_completamento = new Date();
     }
 
     if (!tuttiCompletati && todo.data_completamento) {
-        await todoRepository.updateTodo(todo_id, { data_completamento: null });
+        dati.data_completamento = null;
     }
+
+    await todoRepository.updateTodo(todo_id, dati);
 }
 
 // Creazione di un nuovo elemento in un todo, verificando i permessi
@@ -153,7 +158,8 @@ async function createElementoToDo(todo_id, testo, posizione, priorita, utente_id
     });
 
     // Un elemento nuovo non è completato: se il todo era completo, non lo è più
-    await verificaCompletamentoTodo(todo_id);
+    // e il todo risulta modificato da chi ha creato l'elemento
+    await aggiornaTodo(todo_id, utente_id);
 
     const [elementoCompleto] = await aggiungiDatiElementi([nuovoElemento]);
     return elementoCompleto;
@@ -246,6 +252,9 @@ async function updateElementoToDo(id, dati, utente_id) {
         modificato_da: utente_id,
     });
 
+    // Anche il todo risulta modificato da chi ha cambiato l'elemento
+    await aggiornaTodo(elemento.todo_id, utente_id);
+
     const [elementoCompleto] = await aggiungiDatiElementi([elementoAggiornato]);
     return elementoCompleto;
 }
@@ -277,7 +286,9 @@ async function completaElementoToDo(id, completato, utente_id) {
         modificato_da: utente_id,
     });
 
-    await verificaCompletamentoTodo(elemento.todo_id);
+    // Se tutti gli elementi sono fatti il todo diventa completo, se si toglie una spunta non lo è più
+    // e il todo risulta modificato da chi ha completato (o tolto la spunta) all'elemento
+    await aggiornaTodo(elemento.todo_id, utente_id);
 
     const [elementoCompleto] = await aggiungiDatiElementi([elementoAggiornato]);
     return elementoCompleto;
@@ -303,7 +314,8 @@ async function deleteElementoToDo(id, utente_id) {
     await elementoTodoRepository.deleteElementoToDo(id);
 
     // Se era l'ultimo elemento non fatto, il todo diventa completo
-    await verificaCompletamentoTodo(elemento.todo_id);
+    // e il todo risulta modificato da chi ha eliminato l'elemento
+    await aggiornaTodo(elemento.todo_id, utente_id);
 }
 
 module.exports = {
