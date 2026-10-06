@@ -21,8 +21,9 @@ const notaService = require('./nota_service');
 // Lettere (anche accentate), spazi e apostrofi: es. "Maria Chiara", "Nicolò", "D'Angelo"
 const FORMATO_NOME = /^[A-Za-zÀ-ÖØ-öø-ÿ'’ ]+$/;
 
-// Formato email semplice: testo@testo.testo, senza spazi
-const FORMATO_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Formato dell'email: lettere, numeri e . _ % + - prima della @, poi il dominio e un'estensione di almeno 2 lettere (es. nome.cognome@gmail.com)
+// Niente spazi, virgole o altri simboli. L'email arriva già in minuscolo, quindi bastano le lettere minuscole
+const FORMATO_EMAIL = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 
 const LUNGHEZZA_MINIMA_NOME = 2;
 const LUNGHEZZA_MASSIMA_NOME = 50;
