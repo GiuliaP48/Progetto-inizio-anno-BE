@@ -121,12 +121,14 @@ async function deleteNotifica(id, utente_id) {
 }
 
 // Creazione notifica di tipo "avviso_evento"
-async function createNotificaAvviso(utente_id, evento_id, messaggio) {
+// Salvo anche il calendario dell'evento, così il frontend può scrivere da quale calendario arriva
+async function createNotificaAvviso(utente_id, evento_id, calendario_id, messaggio) {
     return notificaRepository.createNotifica({
         tipo: 'avviso_evento',
         messaggio,
         utente_id,
         evento_id,
+        calendario_id,
     });
 }
 
@@ -146,12 +148,19 @@ async function generateNotificheMancanti() {
             // Minuti che mancano davvero all'inizio: se il server è ripartito in ritardo, sono meno di quelli dell'avviso iniziale
             const minutiMancanti = Math.round((evento.data_inizio.getTime() - adesso.getTime()) / 60000);
 
-            let messaggio = `Promemoria: "${evento.titolo}" inizia adesso`;
-            if (minutiMancanti === 1) {
-                messaggio = `Promemoria: "${evento.titolo}" inizia tra 1 minuto`;
-            } else if (minutiMancanti > 1) {
-                messaggio = `Promemoria: "${evento.titolo}" inizia tra ${minutiMancanti} minuti`;
-            }
+            // Tempo scritto in modo naturale: "1 giorno e 2 ore", "1 ora", "15 minuti"
+            const giorni = Math.floor(minutiMancanti / 1440);
+            const ore = Math.floor((minutiMancanti % 1440) / 60);
+            const minuti = minutiMancanti % 60;
+
+            const parti = [];
+            if (giorni > 0) parti.push(giorni === 1 ? '1 giorno' : `${giorni} giorni`);
+            if (ore > 0) parti.push(ore === 1 ? '1 ora' : `${ore} ore`);
+            if (minuti > 0) parti.push(minuti === 1 ? '1 minuto' : `${minuti} minuti`);
+
+            const messaggio = parti.length > 0
+                ? `Avviso: "${evento.titolo}" inizia tra ${parti.join(' e ')}`
+                : `Avviso: "${evento.titolo}" inizia adesso`;
 
             for (const calendario_id of evento.calendario_ids) {
                 const calendario = await calendarioRepository.getCalendarioById(calendario_id);
@@ -164,7 +173,7 @@ async function generateNotificheMancanti() {
                 for (const utente_id of destinatari) {
                     const giaEsiste = await notificaRepository.existsNotificaAvviso(evento.id, utente_id);
                     if (!giaEsiste) {
-                        await createNotificaAvviso(utente_id, evento.id, messaggio);
+                        await createNotificaAvviso(utente_id, evento.id, calendario_id, messaggio);
                     }
                 }
             }

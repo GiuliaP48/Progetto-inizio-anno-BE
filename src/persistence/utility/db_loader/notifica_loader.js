@@ -1,17 +1,18 @@
 
+
 const notificaService = require('../../../services/notifica_service');
 
 // NB: le notifiche normalmente NON si creano "a mano" perchè "nascono" automaticamente dal sistema:
 // - quelle di invito partono da sole con gli inviti veri del calendario_loader (inserisciMembri);
 // - quelle di avviso le crea createNotificaAvviso, chiamata da generateNotificheMancanti (il cron di ogni minuto) quando arriva l'orario dell'avviso, recuperando anche quelle che dovevano partire mentre il server era spento.
-// Qui creo direttamente solo qualche promemoria, per avere dei dati demo visibili subito, perché generateNotificheMancanti() non scatterebbe su eventi futuri come quelli del seed.
+// Qui creo direttamente solo qualche avviso, per avere dei dati demo visibili subito, perché generateNotificheMancanti() non scatterebbe su eventi futuri come quelli del seed.
 
 // Notifiche di tipo "avviso_evento"
 const notificheAvvisoData = [
-    { destinatarioEmail: 'giulia.romano@gmail.com', eventoIndex: 0, messaggio: 'Promemoria: "Riunione settimanale team" inizia tra 15 minuti', letta: false },
-    { destinatarioEmail: 'andrea.bianchi@gmail.com', eventoIndex: 2, messaggio: 'Promemoria: "Lezione di Basi di Dati" inizia tra 30 minuti', letta: true },
-    { destinatarioEmail: 'francesca.colombo@gmail.com', eventoIndex: 4, messaggio: 'Promemoria: "Visita dentista" inizia tra 15 minuti', letta: false },
-    { destinatarioEmail: 'riccardo.fontana@gmail.com', eventoIndex: 5, messaggio: 'Promemoria: "Allenamento palestra" inizia tra 15 minuti', letta: true },
+    { destinatarioEmail: 'giulia.romano@gmail.com', eventoIndex: 0, messaggio: 'Avviso: "Riunione settimanale team" inizia tra 15 minuti', letta: false },
+    { destinatarioEmail: 'andrea.bianchi@gmail.com', eventoIndex: 2, messaggio: 'Avviso: "Lezione di Basi di Dati" inizia tra 30 minuti', letta: true },
+    { destinatarioEmail: 'francesca.colombo@gmail.com', eventoIndex: 4, messaggio: 'Avviso: "Visita dentista" inizia tra 15 minuti', letta: false },
+    { destinatarioEmail: 'riccardo.fontana@gmail.com', eventoIndex: 5, messaggio: 'Avviso: "Allenamento palestra" inizia tra 15 minuti', letta: true },
 ];
 
 // Inserimento delle notifiche (ricevo utentiCreati ed eventiCreati con gli ID veri)
@@ -30,9 +31,11 @@ async function inserisciNotifiche(utentiCreati, eventiCreati) {
             throw new Error(`Evento non trovato all'indice: ${dato.eventoIndex}`);
         }
 
+        // Calendario dell'evento: serve al frontend per scrivere da quale calendario arriva la notifica
         let notifica = await notificaService.createNotificaAvviso(
             destinatario.id,
             evento.id,
+            evento.calendario_ids[0],
             dato.messaggio
         );
 
